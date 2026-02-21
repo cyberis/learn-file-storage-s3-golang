@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -49,17 +50,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// Validate the media type
+	// Validate the media type and set the file extension based on the media type
 	mediaType := header.Header.Get("Content-Type")
-	if mediaType != "image/jpeg" && mediaType != "image/png" {
+	var ext string
+	switch mediaType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	default:
 		respondWithError(w, http.StatusBadRequest, "Unsupported media type", fmt.Errorf("unsupported media type: %s", mediaType))
-		return
-	}
-
-	// Read the file data into memory
-	data, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't read thumbnail file", err)
 		return
 	}
 
@@ -74,11 +74,31 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Encode the data as a data URL with a base64 string to store in the database
-	encodedData := fmt.Sprintf("data:%s;base64,%s", mediaType, base64.StdEncoding.EncodeToString(data))
+	// Save the file to the assets directory with a unique name based on the video ID and file extension
+	filename := fmt.Sprintf("%s%s", videoID, ext)
+	filepath := filepath.Join(cfg.assetsRoot, filename)
+	dst, err := os.Create(filepath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create thumbnail file", err)
+		return
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save thumbnail file", err)
+		return
+	}
+
+	// Create URL for the thumbnail
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	thumbnailURL := fmt.Sprintf("%s://%s/assets/%s", scheme, r.Host, filename)
 
 	// Update the video record with the thumbnail data and media type
-	video.ThumbnailURL = &encodedData
+	video.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video with thumbnail", err)
