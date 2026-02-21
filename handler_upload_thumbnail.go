@@ -1,13 +1,10 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/cyberis/learn-file-storage-s3-golang/internal/auth"
 	"github.com/google/uuid"
@@ -52,19 +49,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// Validate the media type and set the file extension based on the media type
-	mediaType := header.Header.Get("Content-Type")
-	var ext string
-	switch mediaType {
-	case "image/jpeg":
-		ext = ".jpg"
-	case "image/png":
-		ext = ".png"
-	default:
-		respondWithError(w, http.StatusBadRequest, "Unsupported media type", fmt.Errorf("unsupported media type: %s", mediaType))
-		return
-	}
-
 	// Validate that the user is the owner of the video
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -76,16 +60,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Save the file to the assets directory with a unique name based random 32 bit number base64 encoded and file extension
-	randomBytes := make([]byte, 32)
-	_, err = rand.Read(randomBytes)
+	// Validate the media type and set the filename based on the media type
+	mediaType := header.Header.Get("Content-Type")
+	filename, err := getAssetFilename(mediaType)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random filename", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't determine file extension from media type", err)
 		return
 	}
-	randomString := base64.URLEncoding.EncodeToString(randomBytes)
-	filename := fmt.Sprintf("%s%s", randomString, ext)
-	filepath := filepath.Join(cfg.assetsRoot, filename)
+
+	// Save the file to disk
+	filepath := cfg.getAssetDiskPath(filename)
 	dst, err := os.Create(filepath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create thumbnail file", err)
@@ -100,11 +84,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Create URL for the thumbnail
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	thumbnailURL := fmt.Sprintf("%s://%s/assets/%s", scheme, r.Host, filename)
+	thumbnailURL := cfg.getAssetURL(r, filename)
 
 	// Update the video record with the thumbnail data and media type
 	video.ThumbnailURL = &thumbnailURL
