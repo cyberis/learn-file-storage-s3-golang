@@ -100,12 +100,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Get the aspect ratio of the video using ffprobe and update the S3 file key based on the aspect ratio
+	// to organize videos in S3 by aspect ratio (e.g. landscape, portrait, other)
+	aspectRatio, err := cfg.getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
+
+	// Set the file key for S3 based on the filename and the aspect ratio
+	var filekey string
+	switch aspectRatio {
+	case "16:9":
+		filekey = fmt.Sprintf("landscape/%s", filename)
+	case "9:16":
+		filekey = fmt.Sprintf("portrait/%s", filename)
+	default:
+		filekey = fmt.Sprintf("other/%s", filename)
+	}
+
 	// Upload the video to S3
 	tempFile.Seek(0, io.SeekStart) // Reset file pointer to the beginning before uploading
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
-		Key:         aws.String(filename),
+		Key:         aws.String(filekey),
 		Body:        tempFile,
 		ContentType: aws.String(mediaType),
 	})
@@ -115,7 +134,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Create the S3 URL for the video
-	videoURL := cfg.getS3AssetURL(filename)
+	videoURL := cfg.getS3AssetURL(filekey)
 
 	// Update the video record with the video URL
 	video.VideoURL = &videoURL
