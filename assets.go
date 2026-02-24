@@ -186,3 +186,17 @@ func (cfg apiConfig) getVideoAspectRatio(filePath string) (string, error) {
 	}
 	return displayAspectRatio, nil
 }
+
+func (cfg apiConfig) processVideoForFastStart(filePath string) (string, error) {
+	faststartFilePath := filePath + "_fs.mp4"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", faststartFilePath)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to run ffmpeg for fast start optimization: %v\nOutput: %s\nError: %s", err, out.String(), stderr.String())
+	}
+	return faststartFilePath, nil
+}

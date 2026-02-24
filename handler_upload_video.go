@@ -119,13 +119,26 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		filekey = fmt.Sprintf("other/%s", filename)
 	}
 
-	// Upload the video to S3
-	tempFile.Seek(0, io.SeekStart) // Reset file pointer to the beginning before uploading
+	// Optimize the video for fast start by moving the moov atom to the beginning of the file using ffmpeg
+	tempFile.Close()
+	fastStartVideoPath, err := cfg.processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't optimize video for fast start", err)
+		return
+	}
+	fastStartVideoFile, err := os.Open(fastStartVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open optimized video file", err)
+		return
+	}
+	defer fastStartVideoFile.Close()
+	defer os.Remove(fastStartVideoPath) // Clean up optimized video file after we're done
 
+	// Upload the video to S3
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(filekey),
-		Body:        tempFile,
+		Body:        fastStartVideoFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
